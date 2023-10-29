@@ -2,6 +2,7 @@ import six
 from six.moves.urllib.parse import urljoin, unquote_plus, quote_plus, quote, unquote
 from resources.modules import control, client
 import re
+import json
 import xbmc
 import xbmcplugin
 import common
@@ -62,22 +63,24 @@ def get_livetv_stream(url):  # 18
     #xbmc.log('@#@DATAAAA: {}'.format(url))
     data = client.request(url)
     data = six.ensure_text(data, encoding='utf-8', errors='ignore')
+    data = client.parseDOM(data, 'div', attrs={'id': 'links_block'})
     acestreams = client.parseDOM(data, 'td', attrs={'width': '220'})
     webstreams = client.parseDOM(data, 'td', attrs={'width': '227'})
     weblinks = client.parseDOM(str(webstreams), 'td', attrs={'width': '15'})
     weblinks = client.parseDOM(str(weblinks), 'a', ret='href')
     acelinks = client.parseDOM(str(acestreams), 'td', attrs={'width': '15'})
     acelinks = client.parseDOM(str(acelinks), 'a', ret="href")
-    #xbmc.log('@#@STREAMMMMMSSSSSS:%s' % weblinks, xbmc.LOGINFO)
     titles = []
     streams = []
-    weblinks=list(zip(client.parseDOM(str(webstreams), 'img', attrs={'width': '16'}, ret='title'), client.parseDOM(client.parseDOM(str(webstreams), 'td', attrs={'width': '15'}), 'a', ret='href')))
+    weblinks=list(zip(client.parseDOM(str(webstreams), 'img', attrs={'width': '16'}, ret='title'), client.parseDOM(client.parseDOM(str(webstreams), 'td', attrs={'width': '30'}), 'a', ret='href')))
     acelinks=list(zip(client.parseDOM(str(acestreams), 'img', attrs={'width': '16'}, ret='title'), client.parseDOM(client.parseDOM(str(acestreams), 'td', attrs={'width': '15'}), 'a', ret='href')))
-
+    acelinks=[]
+    xbmc.log('@#@STREAMMMMMSSSSSS:%s' % weblinks, xbmc.LOGINFO)
+    
     for lang, link in weblinks:
-        if 'alieztv' in link:
+        if 'alieztv' in link or 'ifr' in link:
             streams.append('https:{}'.format(link.rstrip()))
-            titles.append('{} {}'.format(lang, len(titles)+1))
+            titles.append('{} {}'.format(lang if lang else "Unknown", len(titles)+1))
 
     for lang, link in acelinks:
             streams.append(link.rstrip())
@@ -87,15 +90,17 @@ def get_livetv_stream(url):  # 18
         dialog = xbmcgui.Dialog()
         ret = dialog.select('[COLORgold][B]Choose Stream[/B][/COLOR]', titles)
         if ret == -1:
+            xbmc.log('ret -1', xbmc.LOGINFO)
             return
         elif ret > -1:
             host = streams[ret]
-            xbmc.log('@#@STREAMMMMM:%s' % host)
+            xbmc.log('@#@STREAMMMMM:%s' % host, xbmc.LOGINFO)
             return resolve(host, common.name)
         else:
             return False
     else:
         link = streams[0]
+        xbmc.log('@#@STREAMMMMM:%s' % link, xbmc.LOGINFO)
         return resolve(link, common.name)
 
 def get_livetv(url):
@@ -114,16 +119,48 @@ def get_livetv(url):
         common.addDir(chan, stream, 100, common.ICON, common.FANART, common.name)
 
 def resolve(url, name):
-    ragnaru = ['liveon.sx/embed', '//em.bedsport', 'cdnz.one/ch', 'cdn1.link/ch', 'cdn2.link/ch']
     xbmc.log('RESOLVE-URL: %s' % url, xbmc.LOGINFO)
     # ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36'
     ua = 'Mozilla/5.0 (iPad; CPU OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.1 Mobile/15E148 Safari/604.1'
     # dialog.notification(AddonTitle, '[COLOR skyblue]Attempting To Resolve Link Now[/COLOR]', icon, 5000)
-    if re.compile(r'.*cdn.livetv[0-9]{3}.me.*').match(url):
-        html = client.request(url, referer=livetv_url)
+    refurl=livetv_url
+    if re.compile(r'.*cdn.livetv[0-9]{3}.me/webplayer\.php.*').match(url):
+        html = client.request(url, referer=refurl)
         html = six.ensure_text(html, encoding='utf-8', errors='ignore')
-        iframeurl = 'https:{}'.format(re.sub(r'\s', '', client.parseDOM(html, 'iframe', attrs={'scrolling': 'no'}, ret='src')[0].strip()))
-        html = client.request(iframeurl, referer=url)
+        refurl=url
+        url = re.sub(r'\s', '', client.parseDOM(html, 'iframe', attrs={'scrolling': 'no', 'allowFullScreen': 'true'}, ret='src')[0].strip())
+        
+    xbmc.log('@#@RESOLVE 1:%s' % url, xbmc.LOGINFO)
+    if re.compile(r'.*aliezstream[0-9]*.pro/live.*').match(url):
+        html = client.request(url, referer=refurl)
+        html = six.ensure_text(html, encoding='utf-8', errors='ignore')
+        refurl=url
+        url = 'https:{}'.format(re.sub(r'\s', '', client.parseDOM(html, 'iframe', attrs={'scrolling': 'no'}, ret='src')[0].strip()))
+        
+    xbmc.log('@#@RESOLVE 2:%s' % url, xbmc.LOGINFO)
+    if re.compile(r'.*aliezstream[0-9]*.pro/embed.*').match(url):
+        html = client.request(url, referer=refurl)
+        html = six.ensure_text(html, encoding='utf-8', errors='ignore')
+        body=client.parseDOM(html, 'body')[0]
+        script=client.parseDOM(body, 'script')[0]
+        fetch=re.sub(r".*fetch\(\"\.*([^\"]+)\".*", r'\1', script, flags=re.DOTALL)
+        fetchurl=re.sub(r'/[^/]*$', fetch, url)
+        jsonresponse = client.request(fetchurl, referer=refurl)
+        id=json.loads(jsonresponse)['id']
+        refurl=url
+        url = 'https:{}'.format(re.sub(r'\s', '', client.parseDOM(body, 'iframe', attrs={'scrolling': 'no'}, ret='src')[0].strip()))
+        url = re.sub(r"'\+chInfos.id\+'", id, url)
+        
+    xbmc.log('@#@RESOLVE 3:%s' % url, xbmc.LOGINFO)
+    if re.compile(r'.*cdn.livetv[0-9]{3}.me.*').match(url):
+        html = client.request(url, referer=refurl)
+        html = six.ensure_text(html, encoding='utf-8', errors='ignore')
+        refurl=url
+        url = 'https:{}'.format(re.sub(r'\s', '', client.parseDOM(html, 'iframe', attrs={'scrolling': 'no'}, ret='src')[0].strip()))
+        
+    xbmc.log('@#@RESOLVE 4:%s' % url, xbmc.LOGINFO)
+    if re.compile(r'.*emb.apl[0-9]{3}.me.*').match(url):
+        html = client.request(url, referer=url)
         html = six.ensure_text(html, encoding='utf-8', errors='ignore')
         script=client.parseDOM(html, 'script')
         script=script[len(script)-1]
@@ -152,4 +189,4 @@ def resolve(url, name):
                     'fanart': common.fanart})
         liz.setPath(url)
         xbmc.Player().play(url1, liz, False)
-        quit()
+        quit()      
