@@ -3,6 +3,8 @@ import xbmcgui
 import xbmcaddon
 import xbmcplugin
 import six
+import re
+from resources.modules import client
 from six.moves.urllib.parse import urljoin, unquote_plus, quote_plus, quote, unquote
 
 ADDON = xbmcaddon.Addon()
@@ -18,6 +20,9 @@ Lang = ADDON.getLocalizedString
 vers = VERSION
 ART = ADDON_PATH + "/resources/icons/"
 BASEURL = ''
+
+def stripHtml(text):
+    return client.replaceHTMLCodes(re.sub(r'<[^>]*>', r'', text)).strip()
 
 def addDir(name, url, mode, iconimage, fanart, description):
     u = sys.argv[0] + "?url=" + quote_plus(url) + "&mode=" + str(mode) + "&name=" + quote_plus(

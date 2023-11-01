@@ -64,27 +64,22 @@ def get_livetv_stream(url):  # 18
     data = client.request(url)
     data = six.ensure_text(data, encoding='utf-8', errors='ignore')
     data = client.parseDOM(data, 'div', attrs={'id': 'links_block'})
-    acestreams = client.parseDOM(data, 'td', attrs={'width': '220'})
     webstreams = client.parseDOM(data, 'td', attrs={'width': '227'})
-    weblinks = client.parseDOM(str(webstreams), 'td', attrs={'width': '15'})
-    weblinks = client.parseDOM(str(weblinks), 'a', ret='href')
-    acelinks = client.parseDOM(str(acestreams), 'td', attrs={'width': '15'})
-    acelinks = client.parseDOM(str(acelinks), 'a', ret="href")
     titles = []
     streams = []
-    weblinks=list(zip(client.parseDOM(str(webstreams), 'img', attrs={'width': '16'}, ret='title'), client.parseDOM(client.parseDOM(str(webstreams), 'td', attrs={'width': '30'}), 'a', ret='href')))
-    acelinks=list(zip(client.parseDOM(str(acestreams), 'img', attrs={'width': '16'}, ret='title'), client.parseDOM(client.parseDOM(str(acestreams), 'td', attrs={'width': '15'}), 'a', ret='href')))
-    acelinks=[]
+    titlelist=client.parseDOM(str(webstreams), 'img', attrs={'width': '16'}, ret='title')
+    ratelist=client.parseDOM(str(webstreams), 'td', attrs={'class': 'rate'})
+    ratelist=client.parseDOM(str(ratelist), 'div')
+    bitratelist=client.parseDOM(str(webstreams), 'td', attrs={'class': 'bitrate'})
+    linklist = client.parseDOM(client.parseDOM(str(webstreams), 'td', attrs={'width': '30'}), 'a', ret='href')
+    weblinks=list(zip(bitratelist,ratelist, titlelist, linklist))
     xbmc.log('@#@STREAMMMMMSSSSSS:%s' % weblinks, xbmc.LOGINFO)
     
-    for lang, link in weblinks:
+    for bitrate, rate, lang, link in weblinks:
         if 'alieztv' in link or 'ifr' in link:
             streams.append('https:{}'.format(link.rstrip()))
-            titles.append('{} {}'.format(lang if lang else "Unknown", len(titles)+1))
-
-    for lang, link in acelinks:
-            streams.append(link.rstrip())
-            titles.append('ACE {} {}'.format(lang, len(titles)+1))
+            bitrate=common.stripHtml(bitrate)
+            titles.append('({}{}) {} {}'.format('{} / '.format(bitrate) if bitrate else '', common.stripHtml(rate), lang if lang else "Unknown", len(titles)+1))
 
     if len(streams) > 1:
         dialog = xbmcgui.Dialog()
@@ -119,6 +114,7 @@ def get_livetv(url):
         common.addDir(chan, stream, 100, common.ICON, common.FANART, common.name)
 
 def resolve(url, name):
+    m3u8=''
     xbmc.log('RESOLVE-URL: %s' % url, xbmc.LOGINFO)
     # ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36'
     ua = 'Mozilla/5.0 (iPad; CPU OS 15_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.1 Mobile/15E148 Safari/604.1'
@@ -157,15 +153,42 @@ def resolve(url, name):
         html = six.ensure_text(html, encoding='utf-8', errors='ignore')
         refurl=url
         url = 'https:{}'.format(re.sub(r'\s', '', client.parseDOM(html, 'iframe', attrs={'scrolling': 'no'}, ret='src')[0].strip()))
-        
+    
     xbmc.log('@#@RESOLVE 4:%s' % url, xbmc.LOGINFO)
+    if re.compile(r'.*freeviplive.com.*').match(url):
+        html = client.request(url, referer=refurl)
+        html = six.ensure_text(html, encoding='utf-8', errors='ignore')
+        script=client.parseDOM(html, 'script')[0]
+        id=re.sub(r".*fid=\"([^\"]*)\".*", r'\1', script, flags=re.DOTALL)
+        refurl=url
+        url='https://b4ucast.com/dhonka2.php?player=desktop&live={}'.format(id)
+        
+    xbmc.log('@#@RESOLVE 5:%s' % url, xbmc.LOGINFO)
+    if re.compile(r'.*b4ucast.com.*').match(url):
+        html = client.request(url, referer=refurl)
+        html = six.ensure_text(html, encoding='utf-8', errors='ignore')
+        script=client.parseDOM(html, 'script', attrs={'type': r'text/javascript'})[2]
+        urlpart=re.sub(r".*return\s*\(\s*\[\s*([^\]]*)\s*\].*", r'\1', script, flags=re.DOTALL)
+        urlpart=re.sub(r'\s*', r'', urlpart)
+        urlpart=re.sub(r'[",]', '', urlpart)
+        urlpart=re.sub(r'\\', '', urlpart)
+        urlpart=re.sub(r'//', '/', urlpart)
+        refurl=url
+        url=urlpart
+        m3u8=urlpart
+        
+    xbmc.log('@#@RESOLVE 6:%s' % url, xbmc.LOGINFO)
     if re.compile(r'.*emb.apl[0-9]{3}.me.*').match(url):
         html = client.request(url, referer=url)
         html = six.ensure_text(html, encoding='utf-8', errors='ignore')
         script=client.parseDOM(html, 'script')
         script=script[len(script)-1]
+        refurl=''
         m3u8='https:{}'.format(re.sub(r".*pl.init\('(.*)'\).*", r'\1', script, flags=re.DOTALL))
-        xbmc.log('M3U8: {}'.format(m3u8), xbmc.LOGINFO)
+        url=m3u8
+        
+    xbmc.log('M3U8: {}'.format(m3u8), xbmc.LOGINFO)
+    if m3u8:
         liz = xbmcgui.ListItem(name)
         liz.setArt({'poster': 'poster.png', 'banner': 'banner.png'})
         liz.setArt({'icon': common.iconimage, 'thumb': common.iconimage, 'poster': common.iconimage, 'fanart': common.fanart})
@@ -179,14 +202,8 @@ def resolve(url, name):
         else:
             liz.setProperty('inputstreamaddon', None)
             liz.setContentLookup(True)
+        if refurl:
+            m3u8='{}|referer={}'.format(m3u8, refurl)
         xbmc.Player().play(m3u8, liz, False)
         quit()
-    if 'acestream' in url:
-        url1 = "plugin://program.plexus/?url=" + url + "&mode=1&name=acestream+"
-        liz = xbmcgui.ListItem(name)
-        liz.setArt({'poster': 'poster.png', 'banner': 'banner.png'})
-        liz.setArt({'icon': common.iconimage, 'thumb': common.iconimage, 'poster': common.iconimage,
-                    'fanart': common.fanart})
-        liz.setPath(url)
-        xbmc.Player().play(url1, liz, False)
-        quit()      
+    quit()    
